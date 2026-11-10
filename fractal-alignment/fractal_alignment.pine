@@ -312,6 +312,7 @@ type C2Setup
     float c4Top     = na
     float c4Bottom  = na
     bool  c4Invalid = false
+    int   c4InvBar  = na
     bool  justConfirmed = false
     array<ICCisd> icList = na
     // [SMT] continuation SMT (SMT section): pairs' extreme around our C2 extreme (ref) and since then
@@ -375,6 +376,11 @@ type EarlyCisdRecord
     int   barIndex
 
 var array<HtfCandle>        htfCandles           = array.new<HtfCandle>()
+// the last candle dropped off the block (a C3 model's candle before C1)
+var float goneH    = na
+var float goneL    = na
+var int   goneHBar = na
+var int   goneLBar = na
 var array<int>              htfOpenBars          = array.new<int>()   // open bars of the last HTF candles, newest first
 var array<line>             vLines               = array.new<line>()
 var PeriodState              state                = PeriodState.new()
@@ -514,6 +520,10 @@ f_smt_pairs(string t) =>
     string p1b = b1 != '' ? (str.contains(b1, ':') ? b1 : pre + b1) : ''
     string p2a = a2 != '' ? (str.contains(a2, ':') ? a2 : pre + a2) : ''
     string p2b = b2 != '' ? (str.contains(b2, ':') ? b2 : pre + b2) : ''
+    if p1b == p1a
+        p1b := ''
+    if p2b == p2a
+        p2b := ''
     if p1a == '' and syminfo.type == 'futures'
         [f1, f2] = f_fut_pairs(t)
         // a dated contract (NQZ2026) pairs with the same contract of the other future (ESZ2026);
@@ -948,22 +958,23 @@ icFindCisdLevel(int extremeBarIdx, int bias) =>
     float cisdPrice  = na
     int   cisdIdx    = na
     bool  foundFirst = false
-    for i = offset to math.min(offset + 500, bar_index, 1499)
-        float cOpen  = open[i]
-        float cClose = close[i]
-        int   att    = cClose > cOpen ? 1 : cClose < cOpen ? -1 : 0
-        if att == 0
-            continue
-        if not foundFirst
-            if att == bias
-                foundFirst := true
-                cisdPrice  := cOpen
-                cisdIdx    := bar_index - i
-        else
-            if att != bias
-                break
-            cisdPrice := cOpen
-            cisdIdx   := bar_index - i
+    if offset <= 1499
+        for i = offset to math.min(offset + 500, bar_index, 1499)
+            float cOpen  = open[i]
+            float cClose = close[i]
+            int   att    = cClose > cOpen ? 1 : cClose < cOpen ? -1 : 0
+            if att == 0
+                continue
+            if not foundFirst
+                if att == bias
+                    foundFirst := true
+                    cisdPrice  := cOpen
+                    cisdIdx    := bar_index - i
+            else
+                if att != bias
+                    break
+                cisdPrice := cOpen
+                cisdIdx   := bar_index - i
     [cisdPrice, cisdIdx]
 
 // Re-anchor the IC level on the opposing run that leads into the current extreme
@@ -1109,11 +1120,12 @@ icStep(C2Setup s, int m, bool live) =>
                         c4Ok := s.isBull ? swPx < lastIc.extremePrice : swPx > lastIc.extremePrice
                         // ... unless it is the swing that made C4's own low / high so far (its wick)
                         if not c4Ok
-                            bool isExt = true
-                            for kb = math.min(math.max(s.c4Start, bar_index - 1499), swIdx) to swIdx
-                                int o2 = bar_index - kb
-                                if s.isBull ? low[o2] < swPx : high[o2] > swPx
-                                    isExt := false
+                            bool isExt = swIdx >= bar_index - 1499
+                            if isExt
+                                for kb = math.min(math.max(s.c4Start, bar_index - 1499), swIdx) to swIdx
+                                    int o2 = bar_index - kb
+                                    if s.isBull ? low[o2] < swPx : high[o2] > swPx
+                                        isExt := false
                                     break
                             c4Ok := isExt
                         // ... or it is still inside C3's range; beyond it no dot
@@ -1333,7 +1345,9 @@ inTimeFilter     = not timeFilterActive or (f1On and inWindow(f1Sess)) or (f2On 
 adrTicker = str.upper(syminfo.ticker)
 adrIsMetal = str.startswith(adrTicker, 'XAU') or str.startswith(adrTicker, 'XAG') or str.startswith(adrTicker, 'XPT') or str.startswith(adrTicker, 'XPD')
 adrHasDigit = str.contains(adrTicker, '0') or str.contains(adrTicker, '1') or str.contains(adrTicker, '2') or str.contains(adrTicker, '3') or str.contains(adrTicker, '4') or str.contains(adrTicker, '5') or str.contains(adrTicker, '6') or str.contains(adrTicker, '7') or str.contains(adrTicker, '8') or str.contains(adrTicker, '9')
-adrIsFx = not adrIsMetal and (syminfo.type == 'forex' or (syminfo.type == 'cfd' and str.length(adrTicker) == 6 and not adrHasDigit))
+// 6-letter CFD = forex only when both halves are currencies (SILVER, NATGAS, COPPER are not)
+adrCcy = 'USD EUR GBP JPY CHF AUD NZD CAD SEK NOK DKK SGD HKD MXN ZAR TRY PLN HUF CZK CNH CNY ILS THB INR KRW'
+adrIsFx = not adrIsMetal and (syminfo.type == 'forex' or (syminfo.type == 'cfd' and str.length(adrTicker) == 6 and not adrHasDigit and str.contains(adrCcy, str.substring(adrTicker, 0, 3)) and str.contains(adrCcy, str.substring(adrTicker, 3, 6))))
 adrPip = str.contains(adrTicker, 'JPY') ? 0.01 : 0.0001
 
 
@@ -1647,6 +1661,8 @@ method reveal(C2Setup s) =>
                 s.c4Box := na
                 if not na(s.c4Dash)
                     line.set_color(s.c4Dash, cisdBearColor)
+                    if not na(s.c4InvBar)
+                        line.set_x2(s.c4Dash, s.c4InvBar)
                 if not na(s.c4Lbl) and showXcLbl
                     label.set_text(s.c4Lbl, 'XC4')
                     label.set_textcolor(s.c4Lbl, cisdBearColor)
@@ -1831,6 +1847,7 @@ method checkC4Invalid(C2Setup s) =>
         invalid = s.isBull ? low < s.c3Extreme : high > s.c3Extreme
         if invalid
             s.c4Invalid := true
+            s.c4InvBar  := bar_index
             if not na(s.c4Lbl) and showXcLbl
                 label.set_text(s.c4Lbl, 'XC4')
                 label.set_textcolor(s.c4Lbl, cisdBearColor)
@@ -1856,6 +1873,8 @@ method checkCisdConfirm(C2Setup s) =>
 processSetup(C2Setup existing, bool trigger, bool isBull, bool c3Model, float extreme, int extremeBar, string tag, float c1Px, int c1Bar, int sweepEnd, float cisdLevel, int cisdIndex, bool cisdDone, int cisdBar, bool smtHit, string smtTxt, float fl1Px, int fl1Bar, float fl0Px, int fl0Bar) =>
     C2Setup result = existing
     if trigger
+        if not na(existing) and not existing.dead and existing.phase != 0
+            icFreeze(existing)
         result := newSetup(isBull, c3Model, extreme, extremeBar, tag, c1Px, c1Bar, sweepEnd, cisdLevel, cisdIndex, cisdDone, cisdBar, smtHit, smtTxt, fl1Px, fl1Bar, fl0Px, fl0Bar)
     else if periodChanged and not na(existing) and not existing.dead
         result := existing.phase == 1 ? existing.advanceToC4() : existing.phase == 2 ? existing.finish() : existing
@@ -1906,12 +1925,12 @@ if low == l0 and low < l1
         for i = 2 to math.max(2, math.min(300, bar_index))
             if low[i] < low
                 break
-            if (up[i] or eq[i]) and dw[i - 1]
+            if close[i] >= open[i] and close[i - 1] < open[i - 1]
                 b = i - 1
                 bullLevelFixed := open[b]
                 bullIndexFixed := bar_index - b
                 for j = b to 0
-                    if open[j] > bullLevelFixed and dw[j]
+                    if open[j] > bullLevelFixed and close[j] < open[j]
                         bullLevelFixed := open[j]
                         bullIndexFixed := bar_index - j
                 // the level stays at the run's open even when the extreme candle opened beyond it
@@ -1925,12 +1944,12 @@ if high == h0 and high > h1
         for i = 2 to math.max(2, math.min(300, bar_index))
             if high[i] > high
                 break
-            if (dw[i] or eq[i]) and up[i - 1]
+            if close[i] <= open[i] and close[i - 1] > open[i - 1]
                 yb = i - 1
                 bearLevelFixed := open[yb]
                 bearIndexFixed := bar_index - yb
                 for j = yb to 0
-                    if open[j] < bearLevelFixed and up[j]
+                    if open[j] < bearLevelFixed and close[j] > open[j]
                         bearLevelFixed := open[j]
                         bearIndexFixed := bar_index - j
                 break
@@ -1955,7 +1974,7 @@ if newBullLevel
 if not na(bullLevelFixed) and not bullReclaimed and close > bullLevelFixed
     bullReclaimed  := true
     bullReclaimBar := bar_index
-    if bullPeriodSweep
+    if bullPeriodSweep and validTf and inTimeFilter and allowBuy and biasNow != 'Bearish'
         drawEarlyCisd(true, bullLevelFixed, bullIndexFixed, bar_index)
         bullEarlyCisdFiredThisBar := true
 
@@ -1966,7 +1985,7 @@ if newBearLevel
 if not na(bearLevelFixed) and not bearReclaimed and close < bearLevelFixed
     bearReclaimed  := true
     bearReclaimBar := bar_index
-    if bearPeriodSweep
+    if bearPeriodSweep and validTf and inTimeFilter and allowSell and biasNow != 'Bullish'
         drawEarlyCisd(false, bearLevelFixed, bearIndexFixed, bar_index)
         bearEarlyCisdFiredThisBar := true
 
@@ -1980,7 +1999,12 @@ if periodChanged
         state.prevLow     := newest.l
     htfCandles.unshift(newHtfCandle())
     while htfCandles.size() > htfCandleCount
-        htfCandles.pop().delete()
+        HtfCandle gone = htfCandles.pop()
+        goneH    := gone.h
+        goneL    := gone.l
+        goneHBar := gone.hBar
+        goneLBar := gone.lBar
+        gone.delete()
     htfOpenBar := bar_index
     htfOpenBars.unshift(bar_index)
     if htfOpenBars.size() > 5
@@ -2054,7 +2078,8 @@ openBarAt(int idx) =>
 // [FORMATION LIQUIDITY] target side of one HTF candle (bullish: its high)
 flPick(int idx, bool isBull) =>
     HtfCandle c = htfAt(idx)
-    [na(c) ? na : isBull ? c.h : c.l, na(c) ? na : isBull ? c.hBar : c.lBar]
+    bool gonePick = na(c) and idx == htfCandles.size()
+    [gonePick ? (isBull ? goneH : goneL) : na(c) ? na : isBull ? c.h : c.l, gonePick ? (isBull ? goneHBar : goneLBar) : na(c) ? na : isBull ? c.hBar : c.lBar]
 
 // [PSP] for a C3 model: its C1 (get(3)) and C2 (get(2)) against the pair's same candles
 bool psp3Hit = false
