@@ -905,10 +905,9 @@ createStdDevProjections(C2Setup s) =>
             level0 = s.cisdLevel
             level1 = s.extreme
             if stdDevCalc != 'Wick'
-                for j = 0 to 50
-                    if s.isBull ? low[j] == s.extreme : high[j] == s.extreme
-                        level1 := s.isBull ? math.min(open[j], close[j]) : math.max(open[j], close[j])
-                        break
+                int j = bar_index - s.c2BarIndex
+                if not na(j) and j >= 0 and j <= 1499
+                    level1 := s.isBull ? math.min(open[j], close[j]) : math.max(open[j], close[j])
             int   leftBar    = s.c2BarIndex
             float priceRange = s.isBull ? level0 - level1 : level1 - level0
             lbs = array.new<label>()
@@ -1284,7 +1283,7 @@ abDir(simple string htf) =>
             dir  := 0
             want := isBear ? -1 : 1
             // the CISD may already have closed through inside C2, after the extreme
-            if not na(lvl)
+            if not na(lvl) and off0 > 1
                 for i = 1 to off0 - 1
                     if (isBear and close[i] < lvl) or (not isBear and close[i] > lvl)
                         dir  := want
@@ -1904,7 +1903,7 @@ if low == l0 and low < l1
         bullLevelFixed := open
         bullIndexFixed := bar_index
     else
-        for i = 2 to 10
+        for i = 2 to math.max(2, math.min(300, bar_index))
             if low[i] < low
                 break
             if (up[i] or eq[i]) and dw[i - 1]
@@ -1923,7 +1922,7 @@ if high == h0 and high > h1
         bearLevelFixed := open
         bearIndexFixed := bar_index
     else
-        for i = 2 to 10
+        for i = 2 to math.max(2, math.min(300, bar_index))
             if high[i] > high
                 break
             if (dw[i] or eq[i]) and up[i - 1]
