@@ -322,6 +322,7 @@ type C2Setup
     float        csRun1   = na
     float        csRun2   = na
     bool         csDiv    = false
+    bool         csTook   = false   // our price reached the C2 extreme before any divergence
     float        csOwnPx  = na
     int          csOwnBar = na
     line         csLn     = na
@@ -1708,21 +1709,32 @@ newSetup(bool isBull, bool c3Model, float extreme, int extremeBar, string tag, f
         s.c4Bottom := bot
         s.c4Mid    := mid
     else
-        // The C3 T-Spot is trimmed to EQ <-> CISD when the CISD level lies inside it (the EQ edge stays, the open
-        // edge moves to the CISD); a CISD outside leaves EQ <-> open.
+        // The C3 T-Spot is the part of the EQ zone (EQ <-> open) that overlaps the CISD zone: the CISD level
+        // <-> the middle of the bodies of the run that made it (from the CISD candle to the extreme). No overlap
+        // leaves EQ <-> open.
         // EQ on the wrong side of C3's open (bearish: below it) with the CISD between them: the box and EQ go
-        // above the open instead, open <-> (C2 extreme + open) / 2. A CISD outside keeps EQ <-> open.
+        // above the open instead, open <-> (C2 extreme + open) / 2.
         bool cisdIn    = not na(cisdLevel) and cisdLevel > bot and cisdLevel < top
         bool wrongSide = isBull ? mid > open : mid < open
         if cisdIn and wrongSide
             mid := ((isBull ? state.prevLow : state.prevHigh) + open) / 2
             top := math.max(open, mid)
             bot := math.min(open, mid)
-        else if cisdIn
-            if top == mid
-                bot := cisdLevel
-            else
-                top := cisdLevel
+        else if not na(cisdLevel) and not na(cisdIndex) and not na(extremeBar)
+            int   o0   = bar_index - math.min(cisdIndex, extremeBar)
+            int   o1   = bar_index - math.max(cisdIndex, extremeBar)
+            float bHi  = na
+            float bLo  = na
+            if o1 >= 0 and o0 <= 1499
+                for k = o1 to o0
+                    bHi := na(bHi) ? math.max(open[k], close[k]) : math.max(bHi, math.max(open[k], close[k]))
+                    bLo := na(bLo) ? math.min(open[k], close[k]) : math.min(bLo, math.min(open[k], close[k]))
+            float c50  = na(bHi) ? cisdLevel : (bHi + bLo) / 2
+            float oTop = math.min(top, math.max(cisdLevel, c50))
+            float oBot = math.max(bot, math.min(cisdLevel, c50))
+            if oTop >= oBot
+                top := oTop
+                bot := oBot
         s.c3Start := bar_index
         s.c3Top   := top
         s.c3Bot   := bot
@@ -2756,8 +2768,10 @@ f_csStep(C2Setup s, bool isHigh, float own, int ownBar, float v1, float v2) =>
     if na(s.csRun2) or f_beyond(isHigh, v2, s.csRun2)
         s.csRun2 := v2
     bool ok = not na(own) and not f_beyond(isHigh, own, s.extreme) and own != s.extreme
+    if not s.csDiv and not na(own) and not ok
+        s.csTook := true
     if not s.csDiv
-        if ok and (f_beyond(isHigh, s.csRun1, s.c2P1) or f_beyond(isHigh, s.csRun2, s.c2P2))
+        if ok and not s.csTook and (f_beyond(isHigh, s.csRun1, s.c2P1) or f_beyond(isHigh, s.csRun2, s.c2P2))
             s.csDiv    := true
             s.csOwnPx  := own
             s.csOwnBar := ownBar
@@ -2790,10 +2804,12 @@ f_smtCont(C2Setup s) =>
                     f_smt_draw(s, s.c2BarIndex, s.extreme, s.csOwnBar, s.csOwnPx, isHigh, txt)
                     s.csLn := s.smtLns.last()
                     s.csLb := txt != '' and s.smtLbls.size() > 0 ? s.smtLbls.last() : na
-                else if line.get_x2(s.csLn) != s.csOwnBar or line.get_y2(s.csLn) != s.csOwnPx
-                    line.set_xy2(s.csLn, s.csOwnBar, s.csOwnPx)
-                    if not na(s.csLb)
-                        label.set_xy(s.csLb, int(math.round((s.c2BarIndex + s.csOwnBar) / 2.0)), (s.extreme + s.csOwnPx) / 2)
+                else
+                    if line.get_x2(s.csLn) != s.csOwnBar or line.get_y2(s.csLn) != s.csOwnPx
+                        line.set_xy2(s.csLn, s.csOwnBar, s.csOwnPx)
+                        if not na(s.csLb)
+                            label.set_xy(s.csLb, int(math.round((s.c2BarIndex + s.csOwnBar) / 2.0)), (s.extreme + s.csOwnPx) / 2)
+                    if not na(s.csLb) and label.get_text(s.csLb) != txt
                         label.set_text(s.csLb, txt)
     s
 
