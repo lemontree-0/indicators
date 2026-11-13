@@ -122,7 +122,7 @@ smtDisplay    = input.string('Both', 'SMT Display', options = ['Both', 'Chart', 
 smtLabels     = input.bool(true, 'Labels?', group = grpSmt, inline = 'smtlbl')
 smtLblSize    = input.string('Small', '', options = ['Tiny', 'Small', 'Normal', 'Large'], group = grpSmt, inline = 'smtlbl', active = smtLabels, tooltip = 'On the chart the label names the pair that made the SMT. The HTF candles show the line only.')
 pairMode      = input.string('Automatic', 'Correlated Pairs', options = ['Automatic', 'Custom'], group = grpSmt, inline = 'pairs')
-useSecondPair = input.bool(true, 'Enable Second Pair?', group = grpSmt, inline = 'pairs', tooltip = "Automatic:\nFutures: NQ ↔ ES + YM, ES ↔ NQ + YM, YM / RTY ↔ ES + NQ, GC ↔ XAUEUR + XAUGBP, SI ↔ XAGEUR + XAGGBP, CL ↔ RB + HO, HO ↔ CL + RB, RB ↔ CL + HO\nCFD (same broker): US100 ↔ US500 + US30, US500 ↔ US100 + US30, US30 ↔ US500 + US100, XAUUSD ↔ XAUEUR + XAUGBP, XAGUSD ↔ XAGEUR + XAGGBP, EURUSD ↔ GBPUSD\n\nCustom: the two symbols below.")
+useSecondPair = input.bool(true, 'Enable Second Pair?', group = grpSmt, inline = 'pairs', tooltip = "Automatic:\nFutures (micros too): NQ / ES / YM / RTY with each other, GC / SI ↔ the same metal in EUR + GBP, CL / RB / HO with each other, BTC ↔ ETH\nCFD (same broker): US100 / US500 / US30 with each other, XAUUSD / XAGUSD ↔ EUR + GBP, EURUSD ↔ GBPUSD, AUDUSD ↔ NZDUSD, USDJPY / USDCHF / USDCAD with each other, oil ↔ gasoline + heating oil, BTC ↔ ETH and similar\n\nCustom: the two symbols below.")
 pair1In       = input.symbol('CME_MINI:ES1!', '1.', group = grpSmt, inline = 'p1', active = pairMode == 'Custom')
 pair1Inv      = input.bool(false, 'Inverse?', group = grpSmt, inline = 'p1', active = pairMode == 'Custom', tooltip = 'Inverse: the pair moves opposite to this symbol (e.g. DXY against EURUSD). Its highs are compared with your lows.')
 pair2In       = input.symbol('CME_MINI:NQ1!', '2.', group = grpSmt, inline = 'p2', active = pairMode == 'Custom' and useSecondPair)
@@ -394,8 +394,8 @@ var array<EarlyCisdRecord>   bullEarlyCisdRecords = array.new<EarlyCisdRecord>()
 var array<EarlyCisdRecord>   bearEarlyCisdRecords = array.new<EarlyCisdRecord>()
 var int                      htfOpenBar           = na
 var line                     htfOpenLn            = na
-var bool                     cisdBullFiredThisBar = false
-var bool                     cisdBearFiredThisBar = false
+bool                         cisdBullFiredThisBar = false
+bool                         cisdBearFiredThisBar = false
 
 allowBuy  = biasFilter != 'Bearish'
 allowSell = biasFilter != 'Bullish'
@@ -894,8 +894,9 @@ pruneEarlyCisd(array<EarlyCisdRecord> recs, int thresholdBar) =>
         while recs.size() > 0 and recs.first().barIndex < thresholdBar
             line.delete(recs.shift().ln)
 
-consumeLastEarlyCisd(array<EarlyCisdRecord> recs) =>
-    if recs.size() > 0
+// only the line drawn for this reclaim (the newest one may belong to an earlier reclaim)
+consumeLastEarlyCisd(array<EarlyCisdRecord> recs, int reclaimBar) =>
+    if recs.size() > 0 and not na(reclaimBar) and recs.last().barIndex == reclaimBar
         line.delete(recs.pop().ln)
 
 parseFloats(string src) =>
@@ -1127,7 +1128,7 @@ icStep(C2Setup s, int m, bool live) =>
                                     int o2 = bar_index - kb
                                     if s.isBull ? low[o2] < swPx : high[o2] > swPx
                                         isExt := false
-                                    break
+                                        break
                             c4Ok := isExt
                         // ... or it is still inside C3's range; beyond it no dot
                         if not c4Ok and not na(s.c3Hi) and not na(s.c3Lo)
@@ -1329,7 +1330,8 @@ int    abSteps = biasFilter == 'Auto Bias 1' ? 1 : biasFilter == 'Auto Bias 2' ?
 string abHtf   = abSteps == 2 ? abNextHtf(abNextHtf(autoTf)) : abNextHtf(autoTf)
 string abLtf   = abLtfOf(abHtf)
 int    abBias  = 0
-if abSteps > 0
+// without a fractal only the Info Table's Bias row reads it
+if abSteps > 0 and (validTf or (tbl_show and tbl_bias))
     abBias := request.security(syminfo.tickerid, abLtf, abDir(abHtf)[1], lookahead = barmerge.lookahead_on, ignore_invalid_symbol = true, calc_bars_count = 5000)
 // the bias the setups follow: Bullish / Bearish / Neutral
 string biasNow = abSteps == 0 ? biasFilter : abBias > 0 ? 'Bullish' : abBias < 0 ? 'Bearish' : 'Neutral'
@@ -1549,17 +1551,19 @@ XData x1Q = na
 XData x2D = na
 XData x2P = na
 XData x2Q = na
+// xBlock reads the pairs only for its SMT lines and PSP labels
+bool xPairsOn = smtOnHtf or showPsp
 if x1On
     x1D := xFetch(syminfo.tickerid, x1Tf, x1Count)
-    if needPairs and pair1Name != ''
+    if xPairsOn and pair1Name != ''
         x1P := xFetch(pair1Name, x1Tf, x1Count)
-    if needPairs and pair2Name != ''
+    if xPairsOn and pair2Name != ''
         x1Q := xFetch(pair2Name, x1Tf, x1Count)
 if x2On
     x2D := xFetch(syminfo.tickerid, x2Tf, x2Count)
-    if needPairs and pair1Name != ''
+    if xPairsOn and pair1Name != ''
         x2P := xFetch(pair1Name, x2Tf, x2Count)
-    if needPairs and pair2Name != ''
+    if xPairsOn and pair2Name != ''
         x2Q := xFetch(pair2Name, x2Tf, x2Count)
 
 // Chart symbol swept C1 (that is what makes it a C2). SMT = a pair did NOT sweep its own C1.
@@ -1892,8 +1896,8 @@ processSetup(C2Setup existing, bool trigger, bool isBull, bool c3Model, float ex
         result := existing.phase == 1 ? existing.advanceToC4() : existing.phase == 2 ? existing.finish() : existing
     result
 
-markTrigger(bool trigger, bool allow, int idx, bool isBuy) =>
-    if trigger and allow and htfCandles.size() > idx
+markTrigger(bool trigger, int idx, bool isBuy) =>
+    if trigger and htfCandles.size() > idx
         c = htfCandles.get(idx)
         if isBuy
             c.triggerBuy := true
@@ -1973,8 +1977,6 @@ var int  bearReclaimBar = na
 
 bullEarlyCisdFiredThisBar = false
 bearEarlyCisdFiredThisBar = false
-cisdBullFiredThisBar := false
-cisdBearFiredThisBar := false
 
 bullPeriodSweep = l0 < l1
 bearPeriodSweep = h0 > h1
@@ -1986,7 +1988,7 @@ if newBullLevel
 if not na(bullLevelFixed) and not bullReclaimed and close > bullLevelFixed
     bullReclaimed  := true
     bullReclaimBar := bar_index
-    if bullPeriodSweep and validTf and inTimeFilter and allowBuy and biasNow != 'Bearish'
+    if showC2 and bullPeriodSweep and validTf and inTimeFilter and allowBuy and biasNow != 'Bearish'
         drawEarlyCisd(true, bullLevelFixed, bullIndexFixed, bar_index)
         bullEarlyCisdFiredThisBar := true
 
@@ -1997,7 +1999,7 @@ if newBearLevel
 if not na(bearLevelFixed) and not bearReclaimed and close < bearLevelFixed
     bearReclaimed  := true
     bearReclaimBar := bar_index
-    if bearPeriodSweep and validTf and inTimeFilter and allowSell and biasNow != 'Bullish'
+    if showC2 and bearPeriodSweep and validTf and inTimeFilter and allowSell and biasNow != 'Bullish'
         drawEarlyCisd(false, bearLevelFixed, bearIndexFixed, bar_index)
         bearEarlyCisdFiredThisBar := true
 
@@ -2079,9 +2081,9 @@ bool c3BuyGo  = c3BuyTrigger and buyOk and showC3 and not c2BuyGo
 bool c3SellGo = c3SellTrigger and sellOk and showC3 and not c2SellGo
 
 if (c2BuyGo or c3BuyGo) and bullReclaimed[1]
-    consumeLastEarlyCisd(bullEarlyCisdRecords)
+    consumeLastEarlyCisd(bullEarlyCisdRecords, bullReclaimBar[1])
 if (c2SellGo or c3SellGo) and bearReclaimed[1]
-    consumeLastEarlyCisd(bearEarlyCisdRecords)
+    consumeLastEarlyCisd(bearEarlyCisdRecords, bearReclaimBar[1])
 
 htfAt(int idx) =>
     htfCandles.size() > idx ? htfCandles.get(idx) : na
@@ -2122,8 +2124,8 @@ if (c2SellGo or c3SellGo) and not na(sellSetup) and not na(sK2)
     sellSetup.c2P2 := sK2.qH
     sellSetup.csStart := c3SellGo ? openBarAt(1) : bar_index
 
-markTrigger(c2BuyGo or c3BuyGo, true, bI1, true)
-markTrigger(c2SellGo or c3SellGo, true, sI1, false)
+markTrigger(c2BuyGo or c3BuyGo, bI1, true)
+markTrigger(c2SellGo or c3SellGo, sI1, false)
 
 // Heads-up: the HTF candle closed and formed a model (C2 or C3 closure), its CISD has not come yet.
 // Only in the "Add Alert" dialog list, not in "Any alert() function call".
@@ -2152,6 +2154,12 @@ if not na(buySetup) and buySetup.justConfirmed
 if not na(sellSetup) and sellSetup.justConfirmed
     cisdBearFiredThisBar := true
     sellSetup.justConfirmed := false
+
+// the CISD already confirmed inside C2: the model shows up confirmed at the closure (no C2/C3 Closure alert then)
+if (c2BuyGo or c3BuyGo) and bullReclaimed[1]
+    cisdBullFiredThisBar := true
+if (c2SellGo or c3SellGo) and bearReclaimed[1]
+    cisdBearFiredThisBar := true
 
 // Separate alert conditions: in TradingView's "Add Alert" dialog pick one of these
 // instead of "Any alert() function call" to set the CISD alerts up on their own (C2/C3 Closure is above).

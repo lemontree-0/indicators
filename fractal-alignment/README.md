@@ -14,8 +14,8 @@ In the order they appear in the settings window. Defaults work out of the box; d
 |---|---|---|
 | Alerts Settings | Master switch + model, C2/C3 closure, Early CISD, SMT and protected swing alerts | On (Early CISD off) |
 | Warnings | Message when the timeframe or a pair does not fit | On |
-| General Settings | History, fractal (Automatic / manual / Custom), C2 / C3 / C4 models, bias (Neutral, Bullish, Bearish, Auto Bias 1 / 2), Hide Setups | History 1, Automatic, Neutral |
-| HTF Candles | Model HTF block (count, size, offset, colors), HTF 1 / HTF 2 extra blocks, HTF Open, Previous EQ, L/H lines | 4 candles, Normal, extra blocks off |
+| General Settings | History, fractal (Automatic / manual / Custom), C2 / C3 / C4 models, bias (Neutral, Bullish, Bearish, Auto Bias 1 / 2) | History 1, Automatic, Neutral |
+| HTF Candles | Model HTF block (count, size, offset, colors), Hide Setups, HTF 1 / HTF 2 extra blocks, HTF Open, Previous EQ, L/H lines | 4 candles, Normal, extra blocks off |
 | HTF Candles Time Labels | Time under each candle, block title (timeframe + time left), 12h / 24h, time zone | On, title above |
 | Model Style | CISD, Early CISD, candle EQ, C1 sweep, labels, T-Spot | All on (Early CISD off) |
 | Protected Swings | Dots and lines after the CISD | On |
