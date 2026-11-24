@@ -215,7 +215,7 @@ tbl_bg_color  = tbl_bg_colorIn
 htfNameColor  = htfNameColorL
 c2c3c4Color   = c2c3c4ColorL
 tblHeadColor  = tbl_text_color == #787b86 ? #2a2e39 : tbl_text_color
-takenColor    = #b2b5be   // protected swing dot after it is taken
+takenColor    = #787b86   // protected swing dot and line after it is taken
 icBackfillMaxBars = 300
 icCisdDotSize     = 'Small'
 
@@ -1190,6 +1190,8 @@ icMarkTaken(C2Setup s, int m) =>
                         ic.taken := true
                         if not na(ic.dotLbl)
                             label.set_textcolor(ic.dotLbl, takenColor)
+                        if not na(ic.ln)
+                            line.set_color(ic.ln, takenColor)
     s
 
 // The C4 label and the protected swing dots: when a dot sits where the C4 label prints (a few bars, about
@@ -1248,6 +1250,8 @@ icMarkTakenAll(int htfOpenT, int hNum) =>
                     ic.taken := true
                     if not na(ic.dotLbl)
                         label.set_textcolor(ic.dotLbl, takenColor)
+                    if not na(ic.ln)
+                        line.set_color(ic.ln, takenColor)
             if ic.taken or ic.frozen
                 icDots.remove(i)
 
@@ -1325,9 +1329,9 @@ icStep(C2Setup s, int m, bool live) =>
                 // the swing is the run's extreme
                 float swPx  = s.icExtreme
                 int   swIdx = s.icExtremeIndex
-                // in C4 a new protected swing has to go beyond the setup's last one from C3 on
+                // in C3 models, a new protected swing in C4 has to go beyond the setup's last one from C3 on
                 bool c4Ok = true
-                if not na(s.c4Start) and swIdx >= s.c4Start and not na(s.icList) and s.icList.size() > 0
+                if s.c3Model and not na(s.c4Start) and swIdx >= s.c4Start and not na(s.icList) and s.icList.size() > 0
                     ICCisd lastIc = s.icList.last()
                     if lastIc.swBar >= nz(s.c3Start, 0)
                         c4Ok := s.isBull ? swPx < lastIc.extremePrice : swPx > lastIc.extremePrice
@@ -1341,11 +1345,9 @@ icStep(C2Setup s, int m, bool live) =>
                                         isExt := false
                                         break
                             c4Ok := isExt
-                        // ... or it is still inside C3's range, or (C2 model) beyond C3 on the trend side
+                        // ... or it is still inside C3's range
                         if not c4Ok and not na(s.c3Hi) and not na(s.c3Lo)
                             c4Ok := swPx >= s.c3Lo and swPx <= s.c3Hi
-                            if not c4Ok and not s.c3Model
-                                c4Ok := s.isBull ? swPx >= s.c3Hi : swPx <= s.c3Lo
                 if c4Ok and (icInFvg(s, swPx, swIdx) or icSweepsSwing(s, swPx, swIdx))
                     registerIcCisd(s, swPx, swIdx, m)
                     if live and barstate.isconfirmed and showAlerts and protAlerts and (not s.early or earlyCisdAlerts)
@@ -2111,6 +2113,12 @@ method reveal(C2Setup s, bool onClose = false) =>
                 alert(msg, alert.freq_once_per_bar_close)
             else
                 alert(msg, alert.freq_once_per_bar)
+        if showAlerts and smtAlerts and show_smt and s.smtHit and not s.smtGone
+            string smtMsg = (s.isBull ? 'Bullish' : 'Bearish') + ' SMT Divergence on ' + syminfo.ticker + ', ' + modelText()
+            if onClose
+                alert(smtMsg, alert.freq_once_per_bar_close)
+            else
+                alert(smtMsg, alert.freq_once_per_bar)
     s
 
 // [FORMATION LIQUIDITY] first bar from the level's own bar up to now that trades through it (now if none)
@@ -3493,7 +3501,7 @@ if barstate.islast
     if not validTf
         string mLbl = modelType == 'Custom' ? modelText() : modelType
         msg := 'Fractal ' + mLbl + ' does not work on the ' + tfLabel(curTfCode()) + ' chart.'
-    if (show_smt or showPsp) and pair1Name == '' and pair2Name == ''
+    if smtCustom and (show_smt or showPsp) and pair1Name == '' and pair2Name == ''
         msg := (msg == '' ? '' : msg + '\n') + 'No correlated pair for ' + syminfo.ticker + '. Set one in Asset Correlation > Custom.'
     if (show_smt or showPsp) and pair1Name != '' and not pair1Seen
         msg := (msg == '' ? '' : msg + '\n') + 'No data for ' + statusSym(pair1Name) + '.'
