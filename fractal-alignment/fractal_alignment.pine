@@ -1,5 +1,5 @@
 //@version=6
-indicator("Fractal Alignment", shorttitle = "Fractal Alignment", overlay = true, max_boxes_count = 500, max_lines_count = 500, max_labels_count = 500, calc_bars_count = 2000)
+indicator("Fractal Alignment", shorttitle = "Fractal Alignment", overlay = true, max_boxes_count = 500, max_lines_count = 500, max_labels_count = 500, calc_bars_count = 1000)
 
 //#region [INPUTS]
 // Every setting, grouped in display order. Inputs added later sit at the very end of this region (after
@@ -231,7 +231,7 @@ sweepOnHtf   = showSweep and sweepDisplay != 'Chart'
 smtOnChart   = show_smt and smtDisplay != 'HTF Candles'
 smtOnHtf     = show_smt and smtDisplay != 'Chart'
 
-// The single 'Calculated bars' setting is TradingView's own (calc_bars_count above, default 2000): the script
+// The single 'Calculated bars' setting is TradingView's own (calc_bars_count above, default 1000): the script
 // only sees that many bars. The first fifth (at most 500) only warm up the HTF candles; the model runs on the rest.
 var int firstBar = bar_index
 calcOn = bar_index - firstBar >= math.min(500, (last_bar_index - firstBar + 1) / 5)
@@ -638,16 +638,34 @@ f_smt_pairs(string t) =>
         p2a := f2
     [p1a, p1b, p2a, p2b]
 
-[smtA1, smtB1, smtA2, smtB2] = f_smt_pairs(smt_ticker)
+var string smtA1 = ''
+var string smtB1 = ''
+var string smtA2 = ''
+var string smtB2 = ''
+if barstate.isfirst
+    [_a1, _b1, _a2, _b2] = f_smt_pairs(smt_ticker)
+    smtA1 := _a1
+    smtB1 := _b1
+    smtA2 := _a2
+    smtB2 := _b2
 bool   smtCustom  = pairMode == 'Custom'
-string pair1A     = smtCustom ? (pair1In == ticker.standard(syminfo.tickerid) ? '' : pair1In) : smtA1
-string pair1B     = smtCustom ? '' : smtB1
-string pair2A     = not useSecondPair ? '' : smtCustom ? (pair2In == ticker.standard(syminfo.tickerid) ? '' : pair2In) : smtA2
-string pair2B     = not useSecondPair or smtCustom ? '' : smtB2
-// DXY runs against a symbol quoted in dollars (EURUSD, 6E) and with a dollar-first one (USDJPY)
-bool   dxyInv     = not str.startswith(smt_ticker, 'USD')
-bool   pair1InvOn = smtCustom ? pair1Inv : pair1A == 'TVC:DXY' and dxyInv
-bool   pair2InvOn = smtCustom ? pair2Inv : pair2A == 'TVC:DXY' and dxyInv
+var string pair1A     = ''
+var string pair1B     = ''
+var string pair2A     = ''
+var string pair2B     = ''
+var bool   dxyInv     = false
+var bool   pair1InvOn = false
+var bool   pair2InvOn = false
+if barstate.isfirst
+    string stdTicker = ticker.standard(syminfo.tickerid)
+    pair1A     := smtCustom ? (pair1In == stdTicker ? '' : pair1In) : smtA1
+    pair1B     := smtCustom ? '' : smtB1
+    pair2A     := not useSecondPair ? '' : smtCustom ? (pair2In == stdTicker ? '' : pair2In) : smtA2
+    pair2B     := not useSecondPair or smtCustom ? '' : smtB2
+    // DXY runs against a symbol quoted in dollars (EURUSD, 6E) and with a dollar-first one (USDJPY)
+    dxyInv     := not str.startswith(smt_ticker, 'USD')
+    pair1InvOn := smtCustom ? pair1Inv : pair1A == 'TVC:DXY' and dxyInv
+    pair2InvOn := smtCustom ? pair2Inv : pair2A == 'TVC:DXY' and dxyInv
 
 // running count of model HTF candles (incremented in [LOGIC] on each new candle); declared here so functions can
 // stamp it (a protected swing dot records the candle it printed in)
@@ -1368,11 +1386,14 @@ icHardStop(C2Setup s) =>
 // closed bar after the CISD (or clears the pending swing once detection has stopped)
 method updateIc(C2Setup s) =>
     if not na(s)
-        icCheckC4Wick(s)
-        // always keep existing dots up to date, even if detection has stopped
-        icMarkTaken(s, bar_index)
+        if not s.icStopped and s.phase == 2
+            icCheckC4Wick(s)
+        // non-early dots are already checked globally by icMarkTakenAll before updateIc runs
+        if s.early
+            icMarkTaken(s, bar_index)
         if icHardStop(s) or not showIcCisd or not s.cisdConfirmed or na(s.cisdEndIndex)
-            icClearPending(s)
+            if s.icPending
+                icClearPending(s)
         else
             // Only ever arm / move / break on a closed candle, and only after the CISD confirm bar
             if barstate.isconfirmed and bar_index > s.cisdEndIndex
@@ -1566,7 +1587,7 @@ string abLtf    = timeframe.in_seconds(abLtfRaw) < timeframe.in_seconds() ? time
 bool   abValid  = abSteps > 0 and validTf and abHtf != autoTf
 int    abBias   = 0
 if abValid
-    abBias := request.security(ticker.modify(syminfo.tickerid, settlement_as_close = settlement_as_close.off), abLtf, abDir(), lookahead = barmerge.lookahead_on, ignore_invalid_symbol = true, calc_bars_count = 5000)
+    abBias := request.security(ticker.modify(syminfo.tickerid, settlement_as_close = settlement_as_close.off), abLtf, abDir(), lookahead = barmerge.lookahead_on, ignore_invalid_symbol = true, calc_bars_count = 1000)
 // the bias the setups follow: Bullish / Bearish / Neutral (or None when Auto Bias has no higher model)
 string biasNow    = abSteps == 0 ? biasFilter : abBias > 0 ? 'Bullish' : abBias < 0 ? 'Bearish' : 'None'
 bool   biasBuyOk  = abSteps == 0 ? allowBuy  : abBias > 0
@@ -1597,7 +1618,11 @@ dayStartH   = adrIsFx ? 17 : 18
 
 nyNewDay(simple int h, simple bool crypto) =>
     int off = (24 - h) * 3600000
-    crypto ? timeframe.change('1D') : not na(time[1]) and dayofmonth(time + off, 'America/New_York') != dayofmonth(time[1] + off, 'America/New_York')
+    var int prevDay = na
+    int curDay = crypto ? na : dayofmonth(time + off, 'America/New_York')
+    bool chg = crypto ? timeframe.change('1D') : not na(prevDay) and curDay != prevDay
+    prevDay := curDay
+    chg
 
 // [ADR] ADR / CDR table and ADR+ / ADR- lines on the NY trading day (see [NY DAY]).
 // Built from 1H bars so it does not depend on chart history: ADR = average high-low of the last
@@ -1616,7 +1641,7 @@ adrReq(simple int len, simple int h, simple bool crypto) =>
     else
         dH := na(dH) ? high : math.max(dH, high)
         dL := na(dL) ? low : math.min(dL, low)
-    float adr = ranges.size() == len ? ranges.avg() : na
+    float adr = barstate.islast and ranges.size() == len ? ranges.avg() : na
     [adr, dH, dL]
 
 
@@ -1634,59 +1659,69 @@ if (adrShow and tbl_show) or adrLinesShow
     adrDayL := rDayL
 
 
-// [SMT / PSP] One request per pair, at the chart timeframe: the pair's bar. The pair's HTF candles are folded
-// from these bars into our own HTF candles (pO / pH / pL / pC, qO / ...), inside our candle's limits, and feed
-// SMT on the chart, SMT on the HTF candles and PSP. htfT (the pair's own HTF open) only tells a stale bar apart.
-type PairBars
-    float h
-    float l
-    float o
-    float c
-    int   barT
-    int   htfT
+// [SMT / PSP] One request per pair, at the chart timeframe: the pair's bar as a plain tuple (avoids UDT
+// allocations on thousands of bars). Folded into our own HTF candles (pO / pH / pL / pC, qO / ...) inside our
+// candle's limits; htfT (the pair's own HTF open) only tells a stale bar apart.
 
-smtPairReq(simple string htf) =>
-    PairBars.new(high, low, open, close, time, time(htf))
-
-// Inverse pair: flip it so its highs line up with our lows
-pairInvert(PairBars p, bool inv) =>
-    inv and not na(p) ? PairBars.new(-p.l, -p.h, -p.o, -p.c, p.barT, p.htfT) : p
-
-// True when p holds a new chart bar belonging to the current HTF candle (skips stale carried-forward bars)
-pairFresh(PairBars p, int prevBarT, int prevHtfT, int openT, bool changed) =>
-    not na(p) and not na(p.h) and not na(p.barT) and (na(prevBarT) ? (not na(openT) and p.barT >= openT) : p.barT != prevBarT and (not changed or (not na(openT) and p.barT >= openT) or (not na(p.htfT) and not na(prevHtfT) and p.htfT != prevHtfT)))
+// True when a pair bar holds a new chart bar belonging to the current HTF candle (skips stale carried-forward bars)
+pairFresh(float h, int barT, int htfT, int prevBarT, int prevHtfT, int openT, bool changed) =>
+    not na(h) and not na(barT) and (na(prevBarT) ? (not na(openT) and barT >= openT) : barT != prevBarT and (not changed or (not na(openT) and barT >= openT) or (not na(htfT) and not na(prevHtfT) and htfT != prevHtfT)))
 
 bool needPairs = show_smt or showPsp
 // The chart-timeframe pair bars feed the model (chart SMT, PSP) and the model block; without a fractal on this
 // chart, or with both hidden, nothing reads them (HTF 1 / HTF 2 request the pairs on their own timeframe).
 bool pairBarsOn = needPairs and validTf and not (hideHtf and hideSetups)
-PairBars pb1a = na
+float p1aH = na, float p1aL = na, float p1aO = na, float p1aC = na, int p1aBT = na, int p1aHT = na
 if pairBarsOn and pair1A != ''
-    pb1a := request.security(pair1A, timeframe.period, smtPairReq(autoTf), ignore_invalid_symbol = true, calc_bars_count = 5000)
-PairBars pb1b = na
+    [_h, _l, _o, _c, _bt, _ht] = request.security(pair1A, timeframe.period, [high, low, open, close, time, time(autoTf)], ignore_invalid_symbol = true, calc_bars_count = 1200)
+    p1aH := _h, p1aL := _l, p1aO := _o, p1aC := _c, p1aBT := _bt, p1aHT := _ht
+float p1bH = na, float p1bL = na, float p1bO = na, float p1bC = na, int p1bBT = na, int p1bHT = na
 if pairBarsOn and pair1B != ''
-    pb1b := request.security(pair1B, timeframe.period, smtPairReq(autoTf), ignore_invalid_symbol = true, calc_bars_count = 5000)
-PairBars pb2a = na
+    [_h, _l, _o, _c, _bt, _ht] = request.security(pair1B, timeframe.period, [high, low, open, close, time, time(autoTf)], ignore_invalid_symbol = true, calc_bars_count = 1200)
+    p1bH := _h, p1bL := _l, p1bO := _o, p1bC := _c, p1bBT := _bt, p1bHT := _ht
+float p2aH = na, float p2aL = na, float p2aO = na, float p2aC = na, int p2aBT = na, int p2aHT = na
 if pairBarsOn and pair2A != ''
-    pb2a := request.security(pair2A, timeframe.period, smtPairReq(autoTf), ignore_invalid_symbol = true, calc_bars_count = 5000)
-PairBars pb2b = na
+    [_h, _l, _o, _c, _bt, _ht] = request.security(pair2A, timeframe.period, [high, low, open, close, time, time(autoTf)], ignore_invalid_symbol = true, calc_bars_count = 1200)
+    p2aH := _h, p2aL := _l, p2aO := _o, p2aC := _c, p2aBT := _bt, p2aHT := _ht
+float p2bH = na, float p2bL = na, float p2bO = na, float p2bC = na, int p2bBT = na, int p2bHT = na
 if pairBarsOn and pair2B != ''
-    pb2b := request.security(pair2B, timeframe.period, smtPairReq(autoTf), ignore_invalid_symbol = true, calc_bars_count = 5000)
+    [_h, _l, _o, _c, _bt, _ht] = request.security(pair2B, timeframe.period, [high, low, open, close, time, time(autoTf)], ignore_invalid_symbol = true, calc_bars_count = 1200)
+    p2bH := _h, p2bL := _l, p2bO := _o, p2bC := _c, p2bBT := _bt, p2bHT := _ht
 
 // The fallback name is used only when the first choice never had data
 var bool seen1a = false
 var bool seen1b = false
 var bool seen2a = false
 var bool seen2b = false
-seen1a := seen1a or (not na(pb1a) and not na(pb1a.h))
-seen1b := seen1b or (not na(pb1b) and not na(pb1b.h))
-seen2a := seen2a or (not na(pb2a) and not na(pb2a.h))
-seen2b := seen2b or (not na(pb2b) and not na(pb2b.h))
+seen1a := seen1a or not na(p1aH)
+seen1b := seen1b or not na(p1bH)
+seen2a := seen2a or not na(p2aH)
+seen2b := seen2b or not na(p2bH)
 bool use1b = not seen1a and seen1b
 bool use2b = not seen2a and seen2b
 
-PairBars pair1     = pairInvert(use1b ? pb1b : pb1a, pair1InvOn)
-PairBars pair2     = pairInvert(use2b ? pb2b : pb2a, pair2InvOn)
+float r1H   = use1b ? p1bH  : p1aH
+float r1L   = use1b ? p1bL  : p1aL
+float r1O   = use1b ? p1bO  : p1aO
+float r1C   = use1b ? p1bC  : p1aC
+int   p1BT  = use1b ? p1bBT : p1aBT
+int   p1HT  = use1b ? p1bHT : p1aHT
+float p1H   = pair1InvOn ? -r1L : r1H
+float p1L   = pair1InvOn ? -r1H : r1L
+float p1O   = pair1InvOn ? -r1O : r1O
+float p1C   = pair1InvOn ? -r1C : r1C
+
+float r2H   = use2b ? p2bH  : p2aH
+float r2L   = use2b ? p2bL  : p2aL
+float r2O   = use2b ? p2bO  : p2aO
+float r2C   = use2b ? p2bC  : p2aC
+int   p2BT  = use2b ? p2bBT : p2aBT
+int   p2HT  = use2b ? p2bHT : p2aHT
+float p2H   = pair2InvOn ? -r2L : r2H
+float p2L   = pair2InvOn ? -r2H : r2L
+float p2O   = pair2InvOn ? -r2O : r2O
+float p2C   = pair2InvOn ? -r2C : r2C
+
 string   pair1Base = pair1A == '' ? '' : use1b ? pair1B : pair1A
 string   pair2Base = pair2A == '' ? '' : use2b ? pair2B : pair2A
 
@@ -1727,12 +1762,17 @@ type XData
 xReq(simple int n) =>
     // one fixed deep read sizes this security context's buffers up front for live bar closes on short histories
     float _w = open[n - 1] + high[n - 1] + low[n - 1] + close[n - 1] + time[n - 1]
-    array<float> ao = array.new<float>()
-    array<float> ah = array.new<float>()
-    array<float> al = array.new<float>()
-    array<float> ac = array.new<float>()
-    array<int>   at = array.new<int>()
+    array<float> ao = na
+    array<float> ah = na
+    array<float> al = na
+    array<float> ac = na
+    array<int>   at = na
     if barstate.islast and (bar_index >= 0 or not na(_w))
+        ao := array.new<float>()
+        ah := array.new<float>()
+        al := array.new<float>()
+        ac := array.new<float>()
+        at := array.new<int>()
         for k = 0 to n - 1
             if na(time[k])
                 break
@@ -2104,8 +2144,8 @@ newSetup(bool isBull, bool c3Model, float extreme, int extremeBar, string tag, f
     s.fl1Bar     := fl1Bar
     s.fl0Px      := fl0Px
     s.fl0Bar     := fl0Bar
-    s.fl1EndH    := flEndNow(fl1Px, fl1Bar, isBull)
-    s.fl0EndH    := flEndNow(fl0Px, fl0Bar, isBull)
+    s.fl1EndH    := showFl ? flEndNow(fl1Px, fl1Bar, isBull) : na
+    s.fl0EndH    := showFl ? flEndNow(fl0Px, fl0Bar, isBull) : na
     s.cisdLevel  := cisdLevel
     s.cisdIndex  := cisdIndex
     [top, bot, mid] = phaseGeom(isBull, not c3Model)
@@ -2498,22 +2538,22 @@ var int prevP2BarT = na
 var int prevP2HtfT = na
 
 // a new pair bar on this chart bar (a pair with another session, like DXY, repeats its last bar while it is closed)
-bool p1Fresh = pairFresh(pair1, prevP1BarT, prevP1HtfT, htfOpenT, periodChanged)
-bool p2Fresh = pairFresh(pair2, prevP2BarT, prevP2HtfT, htfOpenT, periodChanged)
+bool p1Fresh = pairBarsOn and pairFresh(p1H, p1BT, p1HT, prevP1BarT, prevP1HtfT, htfOpenT, periodChanged)
+bool p2Fresh = pairBarsOn and pairFresh(p2H, p2BT, p2HT, prevP2BarT, prevP2HtfT, htfOpenT, periodChanged)
 
 // [HTF SMT / PSP] fold this bar's pair high / low / open / close into the forming HTF candle
 if validTf and (show_smt or showPsp) and htfCandles.size() > 0
     HtfCandle htfNow = htfCandles.first()
     if p1Fresh
-        htfNow.pH := na(htfNow.pH) ? pair1.h : math.max(htfNow.pH, pair1.h)
-        htfNow.pL := na(htfNow.pL) ? pair1.l : math.min(htfNow.pL, pair1.l)
-        htfNow.pO := na(htfNow.pO) ? pair1.o : htfNow.pO
-        htfNow.pC := pair1.c
+        htfNow.pH := na(htfNow.pH) ? p1H : math.max(htfNow.pH, p1H)
+        htfNow.pL := na(htfNow.pL) ? p1L : math.min(htfNow.pL, p1L)
+        htfNow.pO := na(htfNow.pO) ? p1O : htfNow.pO
+        htfNow.pC := p1C
     if p2Fresh
-        htfNow.qH := na(htfNow.qH) ? pair2.h : math.max(htfNow.qH, pair2.h)
-        htfNow.qL := na(htfNow.qL) ? pair2.l : math.min(htfNow.qL, pair2.l)
-        htfNow.qO := na(htfNow.qO) ? pair2.o : htfNow.qO
-        htfNow.qC := pair2.c
+        htfNow.qH := na(htfNow.qH) ? p2H : math.max(htfNow.qH, p2H)
+        htfNow.qL := na(htfNow.qL) ? p2L : math.min(htfNow.qL, p2L)
+        htfNow.qO := na(htfNow.qO) ? p2O : htfNow.qO
+        htfNow.qC := p2C
 
 // C2 closure, read when the next HTF candle opens: the candle that just closed took the previous candle's
 // low / high and its last trade (the chart's close, not a futures settlement) is back inside. The HTF highs /
@@ -2595,40 +2635,48 @@ if showPsp and (c3BuyGo or c3SellGo) and htfCandles.size() > 3
     psp3Hit := htfPsp(htfCandles.get(3), htfCandles.get(2))
 string c3Tag = c3BuyGo or c3SellGo ? 'C3' + (psp3Hit ? '+PSP' : '') : ''
 
-// Reversal SMT of a C2 model: our symbol swept C1 (that is what makes it a C2), a pair did not sweep its own C1
-[c2SmtB1, c2SmtB2] = earlySmtFlags(true, htfAt(1), htfAt(2))
-[c2SmtS1, c2SmtS2] = earlySmtFlags(false, htfAt(1), htfAt(2))
-
 // [NEW MODELS] C2 model: C2 = get(1), C1 = get(2). C3 model: C2 = get(2), C1 = get(3).
-// processSetup runs on every bar (trigger or not); the pair's C2 extremes and the continuation SMT start follow.
-int       bI1 = c3BuyGo ? 3 : 2
-HtfCandle bK1 = htfAt(bI1)
-HtfCandle bK2 = htfAt(bI1 - 1)
-[bF1p, bF1b] = flPick(bI1, true)
-[bF0p, bF0b] = flPick(bI1 + 1, true)
-buySetup := processSetup(buySetup, c2BuyGo or c3BuyGo, true, c3BuyGo, na(bK2) ? na : bK2.l, na(bK2) ? na : bK2.lBar, not (c2BuyGo or c3BuyGo) ? '' : c3BuyGo ? c3Tag : c2TagText(pspHit), na(bK1) ? na : bK1.l, na(bK1) ? na : bK1.lBar, c3BuyGo ? openBarAt(1) : bar_index, bullLevelFixed[1], bullIndexFixed[1], bullReclaimed[1], bullReclaimBar[1], c2BuyGo and (c2SmtB1 or c2SmtB2), c2BuyGo or c3BuyGo ? smtNames(c2SmtB1, c2SmtB2) : '', bF1p, bF1b, bF0p, bF0b)
-if (c2BuyGo or c3BuyGo) and not na(buySetup) and not na(bK2)
-    buySetup.c2P1 := bK2.pL
-    buySetup.c2P2 := bK2.qL
-    buySetup.csStart := c3BuyGo ? openBarAt(1) : bar_index
+// Only runs on periodChanged (triggers and phase transitions only ever happen when a new HTF candle opens).
+if periodChanged
+    // Reversal SMT of a C2 model: our symbol swept C1 (that is what makes it a C2), a pair did not sweep its own C1
+    [c2SmtB1, c2SmtB2] = earlySmtFlags(true, htfAt(1), htfAt(2))
+    [c2SmtS1, c2SmtS2] = earlySmtFlags(false, htfAt(1), htfAt(2))
+    if c2BuyGo or c3BuyGo or not na(buySetup)
+        int       bI1 = c3BuyGo ? 3 : 2
+        HtfCandle bK1 = (c2BuyGo or c3BuyGo) ? htfAt(bI1) : na
+        HtfCandle bK2 = (c2BuyGo or c3BuyGo) ? htfAt(bI1 - 1) : na
+        float bF1p = na, int bF1b = na, float bF0p = na, int bF0b = na
+        if c2BuyGo or c3BuyGo
+            [_p1, _b1] = flPick(bI1, true)
+            [_p0, _b0] = flPick(bI1 + 1, true)
+            bF1p := _p1, bF1b := _b1, bF0p := _p0, bF0b := _b0
+        buySetup := processSetup(buySetup, c2BuyGo or c3BuyGo, true, c3BuyGo, na(bK2) ? na : bK2.l, na(bK2) ? na : bK2.lBar, not (c2BuyGo or c3BuyGo) ? '' : c3BuyGo ? c3Tag : c2TagText(pspHit), na(bK1) ? na : bK1.l, na(bK1) ? na : bK1.lBar, c3BuyGo ? openBarAt(1) : bar_index, bullLevelFixed[1], bullIndexFixed[1], bullReclaimed[1], bullReclaimBar[1], c2BuyGo and (c2SmtB1 or c2SmtB2), c2BuyGo or c3BuyGo ? smtNames(c2SmtB1, c2SmtB2) : '', bF1p, bF1b, bF0p, bF0b)
+        if (c2BuyGo or c3BuyGo) and not na(buySetup) and not na(bK2)
+            buySetup.c2P1 := bK2.pL
+            buySetup.c2P2 := bK2.qL
+            buySetup.csStart := c3BuyGo ? openBarAt(1) : bar_index
 
-int       sI1 = c3SellGo ? 3 : 2
-HtfCandle sK1 = htfAt(sI1)
-HtfCandle sK2 = htfAt(sI1 - 1)
-[sF1p, sF1b] = flPick(sI1, false)
-[sF0p, sF0b] = flPick(sI1 + 1, false)
-sellSetup := processSetup(sellSetup, c2SellGo or c3SellGo, false, c3SellGo, na(sK2) ? na : sK2.h, na(sK2) ? na : sK2.hBar, not (c2SellGo or c3SellGo) ? '' : c3SellGo ? c3Tag : c2TagText(pspHit), na(sK1) ? na : sK1.h, na(sK1) ? na : sK1.hBar, c3SellGo ? openBarAt(1) : bar_index, bearLevelFixed[1], bearIndexFixed[1], bearReclaimed[1], bearReclaimBar[1], c2SellGo and (c2SmtS1 or c2SmtS2), c2SellGo or c3SellGo ? smtNames(c2SmtS1, c2SmtS2) : '', sF1p, sF1b, sF0p, sF0b)
-if (c2SellGo or c3SellGo) and not na(sellSetup) and not na(sK2)
-    sellSetup.c2P1 := sK2.pH
-    sellSetup.c2P2 := sK2.qH
-    sellSetup.csStart := c3SellGo ? openBarAt(1) : bar_index
+    if c2SellGo or c3SellGo or not na(sellSetup)
+        int       sI1 = c3SellGo ? 3 : 2
+        HtfCandle sK1 = (c2SellGo or c3SellGo) ? htfAt(sI1) : na
+        HtfCandle sK2 = (c2SellGo or c3SellGo) ? htfAt(sI1 - 1) : na
+        float sF1p = na, int sF1b = na, float sF0p = na, int sF0b = na
+        if c2SellGo or c3SellGo
+            [_p1, _b1] = flPick(sI1, false)
+            [_p0, _b0] = flPick(sI1 + 1, false)
+            sF1p := _p1, sF1b := _b1, sF0p := _p0, sF0b := _b0
+        sellSetup := processSetup(sellSetup, c2SellGo or c3SellGo, false, c3SellGo, na(sK2) ? na : sK2.h, na(sK2) ? na : sK2.hBar, not (c2SellGo or c3SellGo) ? '' : c3SellGo ? c3Tag : c2TagText(pspHit), na(sK1) ? na : sK1.h, na(sK1) ? na : sK1.hBar, c3SellGo ? openBarAt(1) : bar_index, bearLevelFixed[1], bearIndexFixed[1], bearReclaimed[1], bearReclaimBar[1], c2SellGo and (c2SmtS1 or c2SmtS2), c2SellGo or c3SellGo ? smtNames(c2SmtS1, c2SmtS2) : '', sF1p, sF1b, sF0p, sF0b)
+        if (c2SellGo or c3SellGo) and not na(sellSetup) and not na(sK2)
+            sellSetup.c2P1 := sK2.pH
+            sellSetup.c2P2 := sK2.qH
+            sellSetup.csStart := c3SellGo ? openBarAt(1) : bar_index
 
-if not na(pair1) and not na(pair1.h)
-    prevP1BarT := pair1.barT
-    prevP1HtfT := pair1.htfT
-if not na(pair2) and not na(pair2.h)
-    prevP2BarT := pair2.barT
-    prevP2HtfT := pair2.htfT
+if not na(p1H)
+    prevP1BarT := p1BT
+    prevP1HtfT := p1HT
+if not na(p2H)
+    prevP2BarT := p2BT
+    prevP2HtfT := p2HT
 
 // HTF candle flags (C1 sweep line and PSP on the model block): the same models, but Hide Setups keeps them
 bool htfMarkOk  = calcOn and validTf and inTimeFilter
@@ -2644,18 +2692,27 @@ markTrigger(c2SellMark or c3SellMark, c3SellMark ? 3 : 2, false)
 alertcondition((c2BuyGo or c3BuyGo) and not bullReclaimed[1] and showAlerts and modelAlerts, title = 'Bullish C2/C3 Closure', message = 'Bullish C2/C3 closed on {{ticker}} ({{interval}}), waiting for CISD')
 alertcondition((c2SellGo or c3SellGo) and not bearReclaimed[1] and showAlerts and modelAlerts, title = 'Bearish C2/C3 Closure', message = 'Bearish C2/C3 closed on {{ticker}} ({{interval}}), waiting for CISD')
 
-// per-bar checks of the current models: XC2, XC4, CISD confirmation, then the older model's C4 under a newer C3
-buySetup  := buySetup.extendAndCheck()
-sellSetup := sellSetup.extendAndCheck()
+// per-bar checks of the current models: XC2, XC4, CISD confirmation, then the older model's C4 under a newer C3.
+// Both directions finish each step before the next one: a CISD confirmation reveals its model, and the reveal
+// can push the other direction's model out of the history, so its XC2 / XC4 check has to run first.
+if not na(buySetup) and not buySetup.dead and buySetup.phase != 0
+    buySetup  := buySetup.extendAndCheck()
+if not na(sellSetup) and not sellSetup.dead and sellSetup.phase != 0
+    sellSetup := sellSetup.extendAndCheck()
+if not na(buySetup) and not buySetup.dead and buySetup.phase == 2 and not buySetup.c3Model and not buySetup.c4Invalid and not buySetup.c4Suppressed
+    buySetup  := buySetup.checkC4Invalid()
+if not na(sellSetup) and not sellSetup.dead and sellSetup.phase == 2 and not sellSetup.c3Model and not sellSetup.c4Invalid and not sellSetup.c4Suppressed
+    sellSetup := sellSetup.checkC4Invalid()
+if not na(buySetup) and not buySetup.dead and not buySetup.cisdConfirmed
+    buySetup  := buySetup.checkCisdConfirm()
+if not na(sellSetup) and not sellSetup.dead and not sellSetup.cisdConfirmed
+    sellSetup := sellSetup.checkCisdConfirm()
 
-buySetup  := buySetup.checkC4Invalid()
-sellSetup := sellSetup.checkC4Invalid()
-
-buySetup  := buySetup.checkCisdConfirm()
-sellSetup := sellSetup.checkCisdConfirm()
-
-buySetup  := suppressOverlappedC4(buySetup, sellSetup)
-sellSetup := suppressOverlappedC4(sellSetup, buySetup)
+if not na(buySetup) and not na(sellSetup)
+    if not buySetup.dead and buySetup.phase == 2 and not buySetup.c4Suppressed and not sellSetup.dead and sellSetup.phase == 1 and sellSetup.revealed
+        buySetup  := suppressOverlappedC4(buySetup, sellSetup)
+    if not sellSetup.dead and sellSetup.phase == 2 and not sellSetup.c4Suppressed and not buySetup.dead and buySetup.phase == 1 and buySetup.revealed
+        sellSetup := suppressOverlappedC4(sellSetup, buySetup)
 
 if showAlerts and modelAlerts and showC4
     if not na(buySetup) and buySetup.revealed and not buySetup.dead and not buySetup.c3Model and not buySetup.c4Suppressed and buySetup.phase == 2 and buySetup.c4Start == bar_index
@@ -2677,8 +2734,10 @@ if printBar.get(0) == bar_index or printBar.get(1) == bar_index
 // check every persistent dot against the current bar BEFORE new dots can form on it
 icMarkTakenAll(htfOpenT, htfNum)
 
-buySetup  := buySetup.updateIc()
-sellSetup := sellSetup.updateIc()
+if not na(buySetup)
+    buySetup  := buySetup.updateIc()
+if not na(sellSetup)
+    sellSetup := sellSetup.updateIc()
 
 // [EARLY C2] temporary reversal SMT + dotted protected swings while C2 is still forming.
 // Runs after periodChanged cleanup and after htfCandles / pair folding, so same-bar periodChanged + early CISD works cleanly.
@@ -3314,11 +3373,9 @@ if barstate.islast
     while xLabels.size() > xUsed.get(2)
         label.delete(xLabels.pop())
 
-// NY trading day start (see [NY DAY]), used by the ADR
-bool newKlDay = nyNewDay(dayStartH, dayIsCrypto)
-
+// NY trading day start (see [NY DAY]), used only by the ADR+ / ADR- lines
 var int adrDayStartBar = na
-if newKlDay
+if adrLinesShow and nyNewDay(dayStartH, dayIsCrypto)
     adrDayStartBar := bar_index
 
 fmtPts(float v) =>
@@ -3463,13 +3520,13 @@ bool smtBufOn   = (smtOnChart or smtAlertOn) and (pair1Name != '' or pair2Name !
 smt_on = smtBufOn and calcOn
 
 // only a fresh pair bar counts: a repeated old bar (the pair closed, our symbol trading) is not new data
-float p1BarH = p1Fresh ? pair1.h : na
-float p1BarL = p1Fresh ? pair1.l : na
-float p2BarH = p2Fresh ? pair2.h : na
-float p2BarL = p2Fresh ? pair2.l : na
+float p1BarH = p1Fresh ? p1H : na
+float p1BarL = p1Fresh ? p1L : na
+float p2BarH = p2Fresh ? p2H : na
+float p2BarL = p2Fresh ? p2L : na
 // The pairs' bar highs / lows of the last bars, kept in arrays: a function that only runs on some bars
 // cannot read a series' history (it would see the values of its earlier calls).
-SMT_BUF = 1500
+SMT_BUF = 400
 var array<float> pBuf1H = array.new<float>()
 var array<float> pBuf1L = array.new<float>()
 var array<float> pBuf2H = array.new<float>()
@@ -3554,18 +3611,26 @@ f_smtCont(C2Setup s) =>
 
 // The first wick beyond a setup's C2 extreme, from the setup until the end of C5 (C3 model: from C4), removes
 // all its SMT lines (reversal and continuation); the label stays unless the close goes through too (XC2).
-smtBreachCheck(C2Setup s) =>
-    if not na(s) and not s.smtGone and not na(s.smtHtf0) and not na(s.extreme) and htfNum - s.smtHtf0 < (s.c3Model ? 2 : 3)
-        if s.isBull ? low < s.extreme : high > s.extreme
-            smtClear(s)
-
+// Checked inline (a function call per record and bar was a hot spot): the history records, then the current
+// models, which may have left the history while still running (their block SMT goes too).
 if show_smt
-    for r in setupRecords
-        smtBreachCheck(r.setup)
-    smtBreachCheck(buySetup)
-    smtBreachCheck(sellSetup)
+    if setupRecords.size() > 0
+        for r in setupRecords
+            C2Setup s = r.setup
+            if not s.smtGone and not na(s.smtHtf0) and not na(s.extreme) and htfNum - s.smtHtf0 < (s.c3Model ? 2 : 3)
+                if s.isBull ? low < s.extreme : high > s.extreme
+                    smtClear(s)
+    if not na(buySetup) and not buySetup.smtGone and not na(buySetup.smtHtf0) and not na(buySetup.extreme) and htfNum - buySetup.smtHtf0 < (buySetup.c3Model ? 2 : 3)
+        if low < buySetup.extreme
+            smtClear(buySetup)
+    if not na(sellSetup) and not sellSetup.smtGone and not na(sellSetup.smtHtf0) and not na(sellSetup.extreme) and htfNum - sellSetup.smtHtf0 < (sellSetup.c3Model ? 2 : 3)
+        if high > sellSetup.extreme
+            smtClear(sellSetup)
 
-f_smtCont(buySetup)
-f_smtCont(sellSetup)
+if smt_on
+    if not na(buySetup) and not buySetup.dead and not buySetup.smtGone and buySetup.phase != 0
+        f_smtCont(buySetup)
+    if not na(sellSetup) and not sellSetup.dead and not sellSetup.smtGone and sellSetup.phase != 0
+        f_smtCont(sellSetup)
 
 //#endregion

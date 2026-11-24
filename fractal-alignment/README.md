@@ -113,7 +113,7 @@ One column; each row can be turned off. **ADR · CDR %** is on by default, the d
 ## Other
 
 - **Warnings** (on by default; nothing shows while all is fine): a short message when the chart timeframe does not fit the fractal or a pair has no data.
-- **Calculated bars** (2000, TradingView's own setting): the first fifth (at most 500) warms up the HTF candles; the model runs on the rest. Lower it for speed, raise it to see further back.
+- **Calculated bars** (1000, TradingView's own setting): the first fifth (at most 500, 200 by default) warms up the HTF candles; the model runs on the rest (about the last 800 bars by default). 1000 keeps the script under the 0.5 s limit of the free plan; on a paid plan you can raise it to see further back. Pair data comes from the last 1200 bars, so above that SMT and PSP do not show on the left part of the chart.
 
 ## Colors
 
